@@ -1,7 +1,7 @@
 # ocrbot
 a reddit bot designed to perform OCR using [pytesseract](https://github.com/madmaze/pytesseract) on images found in a subreddit
 
-0. Install Google Tesseract OCR on your machine, follow the installation instructions found in the pytesseract link, note the installation directory. To make sure you can invoke tesseract as a command in your command prompt you must first locate the directory containing tesseract.exe, which is in your install directory. You must add this path to your environment variables. Next use pip to install pytesseract, which is just python bindings for Tesseract OCR. Finally pip install praw to use the reddit api easily, and pip install pillow for the image preprocessing library.
+0. Install [Google Tesseract OCR](https://github.com/tesseract-ocr/tesseract) on your machine and be sure to note the installation directory. To make sure you can invoke tesseract as a command in your command prompt you must first locate the directory containing tesseract.exe, which is in your install directory. You must add this path to your environment variables (use google if you don't know how). Next use pip to install pytesseract, which is just python bindings for Tesseract OCR. Finally pip install praw to use the reddit api easily, and pip install pillow for the image preprocessing library.
 
 1. Provide your validation.txt file in the same directory as ocrbot.py, this file must be empty other than 4 different lines:
   Line 0: your 26 character reddit api secret
