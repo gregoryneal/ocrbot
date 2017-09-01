@@ -30,7 +30,8 @@ class bot():
         self.preText = [ "**^^I ^^sense ^^letters:**", "**^^let ^^me ^^help ^^you ^^READ:**",]
 
         #process this many submissions before exiting, so the program doesn't run forever
-        self.numSubmissionsToProcess = 5
+        #if you want the program to run forever (process every new submission forever), set this value to -1
+        self.numSubmissionsToProcess = -1
 
     def loadCredentials(self):
         ret = []
@@ -194,14 +195,44 @@ class bot():
 
     #processes an image for OCR, fpath is assumed to be an image type file
     def processImage(self, fpath):
-        image = Image.open(fpath)
+        '''
+        This method will attempt to extract text from an image using various preprocessing techniques and picking the best result (the longest result)
         
+        Prepreprocessing: convert the image to grayscale
+
+        First method: Apply gaussian blur
+        Second method: Apply sharpness filter
+        Third method: First and second method for some reason?
+        '''
+        texts = []
+        image = Image.open(fpath)        
         image = image.convert("L")
-        image = image.filter(ImageFilter.GaussianBlur())
-        #image = image.convert("1")
-        
+        baseimage = image.copy() #a reference to the unprocessed image, only process this bad boy
+
+        #first method
+        image = baseimage.filter(ImageFilter.GaussianBlur())
+        #image = image.convert("1")        
         image.save(fpath)
-        return image
+        #save for testing
+        texts.append(ocr.image_to_string(image))
+
+        #second method
+        image = baseimage.filter(ImageFilter.SHARPEN)
+        image.save(fpath)
+        texts.append(ocr.image_to_string(image))
+
+        #third method
+        image = baseimage.filter(ImageFilter.GaussianBlur()).filter(ImageFilter.SHARPEN)
+        image.save(fpath)
+        texts.append(ocr.image_to_string(image))
+
+        #add more methods here
+
+        #now pick the longest on and return it
+        longestText = max(texts, key=len)
+        print("Used method " + str(texts.index(longestText) + 1))
+
+        return longestText
 
     def makeComment(self, submission, comment):
         if self.reddit is None:
@@ -226,25 +257,29 @@ class bot():
 
         print("Loaded ocr_bot...")
         print("Browsing posts from /r/" + self.subreddit)
-        print("Processing " + str(self.numSubmissionsToProcess) + " submissions before termination.")
+
+        if self.numSubmissionsToProcess == -1:
+            print("Processing all new submissions until manually terminated...")
+        else:
+            print("Processing " + str(self.numSubmissionsToProcess) + " submissions before termination.")
 
         #deauthorize the reddit instance until just before we want to post
         self.reddit.read_only = True
 
         #get the /r/all subreddit
-        streamsubmissions = self.reddit.subreddit(self.subreddit)
+        posts = self.reddit.subreddit(self.subreddit)
 
         i = 0
         while True:
-            if i >= self.numSubmissionsToProcess:
+            if self.numSubmissionsToProcess != -1 and i >= self.numSubmissionsToProcess:
                 print("Finished processing all " + str(self.numSubmissionsToProcess) + " submissions.")
                 break
 
             try:
-                #loop through new posts
-                for submission in streamsubmissions.stream.submissions():
+                #loop through posts
+                for submission in posts.stream.submissions():
 
-                    if i >= self.numSubmissionsToProcess:
+                    if self.numSubmissionsToProcess != -1 and i >= self.numSubmissionsToProcess:
                         break
 
                     if not self.submissionFilter(submission):
@@ -264,19 +299,16 @@ class bot():
                     #remove this data
                     del response
 
-                    image = self.processImage(fpath)
-                    text = ocr.image_to_string(image)
+                    text = self.processImage(fpath)
 
-                    #automatically skip this one if there's no enough text, else ask for confirmation
-                    if len(text.replace(" ", "")) == 0:
-                        print("skipping " + submission.id + ", no text here")
+                    if len(text.replace(' ', '')) <= 3:
+                        print("Too short a text, skipping...")
                         self.recordNewSubmission(submission.id)
                         continue
-
             
                     #so newlines are actually newlines in the reddit comment
                     text = text.replace("\n", "\n\n")            
-                    text = self.surrealifyText(text)
+                    text = self.surrealifyText(text) #prepare the text for /r/surrealmemes, pass through a zalgo filter and an angery filter
                     fulltext = self.surrealifyText(self.preText[random.randrange(0, len(self.preText))]) + "\n\n&nbsp;\n\n" + text + "\n\n&nbsp;\n\n^^^^created^^by^^some^^guy ^^^^^^| ^^^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
 
                     print("Found some text! Opening page, creating post")
@@ -287,6 +319,7 @@ class bot():
                     #try to post
                     try:
                         i += 1
+                        print("progress: " + str(i) + "/" + str(self.numSubmissionsToProcess))
                         self.makeComment(submission, fulltext)
                         ##check for approval
                         #if self.NEEDS_APPROVAL:
