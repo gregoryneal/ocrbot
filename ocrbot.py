@@ -1,5 +1,5 @@
 from PIL import Image, ImageEnhance, ImageFilter
-
+from prawcore import PrawcoreException
 import praw
 import shutil
 import requests
@@ -23,13 +23,14 @@ class bot():
         self.image_fname = "img"
         self.COMPLETED_IMAGE_ID_FILE = "visitedImages.txt"
 
+        self.reddit = None
         self.subreddit = "surrealmemes"
         self.NEEDS_APPROVAL = True
 
         self.preText = [ "**^^I ^^sense ^^letters:**", "**^^let ^^me ^^help ^^you ^^READ:**",]
 
-        #need at least 10 chars per line of response text
-        self.responseMinLineLength = 10
+        #process this many submissions before exiting, so the program doesn't run forever
+        self.numSubmissionsToProcess = 5
 
     def loadCredentials(self):
         ret = []
@@ -86,7 +87,6 @@ class bot():
     def surrealifyText(self, text):
         chanceLineIsZalgofied = 0.4
         changeWordIsAngery = 0.1
-        responseMinLineLength = 10
 
         alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
 
@@ -203,9 +203,22 @@ class bot():
         image.save(fpath)
         return image
 
+    def makeComment(self, submission, comment):
+        if self.reddit is None:
+            return None
+
+        #reauthorize the bot to post
+        self.reddit.read_only = False
+        submission.reply(comment)
+        print("submission approved")
+        #append the submission id to the file so we never work on it again
+        self.recordNewSubmission(submission.id)
+        self.reddit.read_only = True
+
+    #initialize the bot and loop through the posts
     def runBot(self):
         #get a Reddit instance
-        reddit = praw.Reddit(client_id=self.clientId,
+        self.reddit = praw.Reddit(client_id=self.clientId,
                         client_secret=self.secret,
                         password=self.password,
                         user_agent='python:ocr_bot:v0.1 (by /u/ocr_bot)',
@@ -213,30 +226,31 @@ class bot():
 
         print("Loaded ocr_bot...")
         print("Browsing posts from /r/" + self.subreddit)
+        print("Processing " + str(self.numSubmissionsToProcess) + " submissions before termination.")
 
         #deauthorize the reddit instance until just before we want to post
-        reddit.read_only = True
+        self.reddit.read_only = True
 
         #get the /r/all subreddit
-        all = reddit.subreddit(self.subreddit)
+        streamsubmissions = self.reddit.subreddit(self.subreddit)
 
+        i = 0
         while True:
+            if i >= self.numSubmissionsToProcess:
+                print("Finished processing all " + str(self.numSubmissionsToProcess) + " submissions.")
+                break
+
             try:
                 #loop through new posts
-                for submission in all.hot():
+                for submission in streamsubmissions.stream.submissions():
+
+                    if i >= self.numSubmissionsToProcess:
+                        break
 
                     if not self.submissionFilter(submission):
                         continue
 
                     print("Processing submission: " + submission.id)
-                    #openInBrowser = self.approveMessage("Open in browser?")
-                    #if (openInBrowser):
-                    #webbrowser.open_new_tab(submission.shortlink)
-
-                    #if (self.approveMessage("Skip this one?")):
-                    #    if self.approveMessage("Add to skip list?"):
-                    #        self.recordNewSubmission(submission.id)
-                    #    continue
 
                     #get the pics extension so we can open the correct type of file
                     ext = submission.url[-4:]  
@@ -265,45 +279,41 @@ class bot():
                     text = self.surrealifyText(text)
                     fulltext = self.surrealifyText(self.preText[random.randrange(0, len(self.preText))]) + "\n\n&nbsp;\n\n" + text + "\n\n&nbsp;\n\n^^^^created^^by^^some^^guy ^^^^^^| ^^^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
 
-                    if self.approveMessage("Found some text! Open page and compare with OCR?"):
-                        webbrowser.open_new_tab(submission.shortlink)
-                        print("\nFull Post:\n")
-                        print(fulltext)
+                    print("Found some text! Opening page, creating post")
+                    webbrowser.open_new_tab(submission.shortlink)
+                    print("\nFull Post:\n")
+                    print(fulltext)
 
                     #try to post
                     try:
-                        #check for approval
-                        if self.NEEDS_APPROVAL:
-                            if self.approveMessage("Approve above post?"):
-                                #reauthorize the bot to post
-                                reddit.read_only = False
-                                submission.reply(fulltext)
-                                print("submission approved")
-                                #append the submission id to the file so we never work on it again
-                                self.recordNewSubmission(submission.id)
-                            else:
-                                print("submission denied")
-                                addToSkip = self.approveMessage("Add to skip list?")
-                                if addToSkip:
-                                    self.recordNewSubmission(submission.id)
-
-                    except praw.exceptions.PRAWException:
-                        print("There was an error posting...")
-                        reddit.read_only = True
+                        i += 1
+                        self.makeComment(submission, fulltext)
+                        ##check for approval
+                        #if self.NEEDS_APPROVAL:
+                        #    if self.approveMessage("Approve above post?"):
+                        #        i += 1
+                        #        makeComment(submission, fulltext)
+                                
+                        #    else:
+                        #        print("submission denied")
+                        #        addToSkip = self.approveMessage("Add to skip list?")
+                        #        if addToSkip:
+                        #            self.recordNewSubmission(submission.id)
+                                                #check for approval
+                    except PrawcoreException:
+                        print("There was an error posting, restarting stream...")
                         break
 
-                    reddit.read_only = True
-
-                    goAgain = self.approveMessage("Go again?")
-                    if not goAgain:
-                        print("exiting")
-                        return None
-            except praw.exceptions.PRAWException:
-                if not self.approveMessage("There was an error, try again?"):
-                    break
-            except prawcore.exceptions.ResponseException:
-                if not self.approveMessage("There was an error, try again?"):
-                    break
+                    #goAgain = self.approveMessage("Go again?")
+                    #if not goAgain:
+                    #    print("exiting")
+                    #    return None
+            except PrawcoreException:
+                print("Prawcore exception, restarting stream...")
+                continue
+            except KeyboardInterrupt:
+                print("Keyboard interruption, stopping stream...")
+                break
     
 def fixFiles():
     with open('diacritics_up.txt', 'r') as file:
