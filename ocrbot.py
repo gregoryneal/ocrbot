@@ -2,6 +2,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 from prawcore import PrawcoreException
 import praw
 import shutil
+import time
 import requests
 import pytesseract as ocr
 import webbrowser
@@ -252,10 +253,10 @@ class bot():
         self.reddit = praw.Reddit(client_id=self.clientId,
                         client_secret=self.secret,
                         password=self.password,
-                        user_agent='python:ocr_bot:v0.1 (by /u/ocr_bot)',
+                        user_agent='python:'+self.username+':v0.1 (by /u/'+self.username+')',
                         username=self.username)
 
-        print("Loaded ocr_bot...")
+        print("Loaded " + self.username + "...")
         print("Browsing posts from /r/" + self.subreddit)
 
         if self.numSubmissionsToProcess == -1:
@@ -309,18 +310,25 @@ class bot():
                     #so newlines are actually newlines in the reddit comment
                     text = text.replace("\n", "\n\n")            
                     text = self.surrealifyText(text) #prepare the text for /r/surrealmemes, pass through a zalgo filter and an angery filter
-                    fulltext = self.surrealifyText(self.preText[random.randrange(0, len(self.preText))]) + "\n\n&nbsp;\n\n" + text + "\n\n&nbsp;\n\n^^^^created^^by^^some^^guy ^^^^^^| ^^^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
+                    fulltext = self.surrealifyText(self.preText[random.randrange(0, len(self.preText))]) + "\n\n&nbsp;\n\n" + text + "\n\n&nbsp;\n\n^^^^created ^^^^by ^^^^some ^^^^guy ^^^^| ^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
 
-                    print("Found some text! Opening page, creating post")
-                    webbrowser.open_new_tab(submission.shortlink)
+                    print("Found some text! Creating post and opening page!")
                     print("\nFull Post:\n")
                     print(fulltext)
 
-                    #try to post
+                    #try to post and open the comment window
                     try:
                         i += 1
                         print("progress: " + str(i) + "/" + str(self.numSubmissionsToProcess))
                         self.makeComment(submission, fulltext)
+                        
+                        #time.sleep(2) #give it time to send the comment before opening
+
+                        #just open the most recent comment
+                        #for comment in self.reddit.redditor(self.username).comments.new():
+                        #    webbrowser.open_new_tab(comment.permalink())
+                        #    break
+
                         ##check for approval
                         #if self.NEEDS_APPROVAL:
                         #    if self.approveMessage("Approve above post?"):
