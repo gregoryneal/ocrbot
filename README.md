@@ -1,5 +1,5 @@
 # ocrbot
-a reddit bot designed to perform OCR using [pytesseract](https://github.com/madmaze/pytesseract) on images found in a subreddit
+a reddit bot designed to perform OCR using [pytesseract](https://github.com/madmaze/pytesseract) on images found in a subreddit. This code is used to run Reddit's [ocr_bot](https://www.reddit.com/user/ocr_bot/)
 
 0. Install [Google Tesseract OCR](https://github.com/tesseract-ocr/tesseract) on your machine and be sure to note the installation directory. To make sure you can invoke tesseract as a command in your command prompt you must first locate the directory containing tesseract.exe, which is in your install directory. You must add this path to your environment variables (use google if you don't know how). Next you must install a series of python packages for the bot to work. You can use pip to install all of these:
 * ```pip install pytesseract``` - these are just python bindings for Tesseract OCR.   
