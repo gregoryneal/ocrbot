@@ -12,4 +12,4 @@ a reddit bot designed to perform OCR using [pytesseract](https://github.com/madm
 2. Once your validation info is supplied and installed any prerequisite packages, you can run the bot like a normal python script.
 It will loop through submissions in the supplied subreddit, looking for images, once an image is found it downloads it and performs OCR (optical character recognition) to try and detect text. If any text is found, it is passed through a filter to prepare it for a reddit comment. Finally it posts the reddit comment, and opens a new tab to the post for viewing.
 
-Currently ships with a filter to create [zalgo text](http://www.eeemo.net/).
+For the zalgo text filter to work you first need to ```pip install zalgo_text```
