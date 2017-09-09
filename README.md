@@ -5,7 +5,7 @@ a reddit bot designed to perform OCR using [pytesseract](https://github.com/madm
 * ```pip install pytesseract``` - these are just python bindings for Tesseract OCR.   
 * ```pip install praw```        - so the bot can access the reddit api.
 * ```pip install pillow```      - for the image preprocessing library.
-* ```pip install zalgo_text```  - for the zalgo text filter to work.
+* ```pip install zalgo_text```  - [my own creation](https://github.com/gregoryneal/zalgo), this allows the zalgo text filter to work.
 
 1. Provide your validation.txt file in the same directory as ocrbot.py, this file must be empty other than 4 different lines:
   Line 0: your 26 character reddit api secret
