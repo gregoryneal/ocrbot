@@ -1,5 +1,7 @@
 from PIL import Image, ImageEnhance, ImageFilter
 from prawcore import PrawcoreException
+from zalgo_text import zalgo
+from enum import Enum
 import praw
 import shutil
 import time
@@ -8,8 +10,29 @@ import pytesseract as ocr
 import webbrowser
 import random
 import re
+import datetime
+
+class RunType(Enum):
+    POSTING = 1,    #will post to reddit, make sure you are validated
+    DEBUG = 2,      #will only print out the full text for inspection, will not add to completed id file, nor will it check it for visited links
 
 class bot():    
+
+    @property
+    def runType(self):
+        return self._runType
+
+    @runType.setter
+    def runType(self, value):
+        if value is RunType.DEBUG:
+            print("DEBUG MODE")
+            self.recordsubmissions = False
+            self.checkVisitedFile = False
+        if value is RunType.POSTING:
+            print("POSTING MODE")
+            self.recordsubmissions = True
+            self.checkVisitedFile = True
+        self._runType = value
 
     def __init__(self, **kwargs):
 
@@ -21,27 +44,51 @@ class bot():
         self.username = validation[2]
         self.password = validation[3]
 
-        self.image_fname = "img"
+        self.image_fname = "images/img"
         self.COMPLETED_IMAGE_ID_FILE = "visitedImages.txt"
 
         self.reddit = None
         self.subreddit = "surrealmemes"
-        self.NEEDS_APPROVAL = True
+        self.recordsubmissions = True
+        self.checkVisitedFile = True
 
-        self.preText = [ "**^^I ^^sense ^^letters:**", "**^^let ^^me ^^help ^^you ^^READ:**",]
+        self.preText = "**^^there ^^are ^^WORDS ^^nearby**"
+        self.postText = "^^^^i ^^^^am ^^^^a ^^^^bot ^^^^| ^^^^created ^^^^by ^^^^" + zalgo.zalgofy("CHAOS") + "^^^^| ^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
 
         #process this many submissions before exiting, so the program doesn't run forever
         #if you want the program to run forever (process every new submission forever), set this value to -1
         self.numSubmissionsToProcess = -1
 
+        #get a Reddit instance
+        self.reddit = praw.Reddit(client_id=self.clientId,
+                        client_secret=self.secret,
+                        password=self.password,
+                        user_agent='python:'+self.username+':v0.1 (by /u/'+self.username+')',
+                        username=self.username)
+
+        self.runType = RunType.DEBUG
+
+        print("Loaded " + self.username + "...")
+
     def loadCredentials(self):
         ret = []
-        with open("validation.txt", 'r') as file:
-            for line in file:
-                ret.append(line.rstrip())
+        try:
+            with open("C:/Users/Greg/source/repos/ocrbot/ocrbot/validation.txt", 'r') as file:
+                for line in file:
+                    ret.append(line.rstrip())
+        except FileNotFoundError:
+            print("No validation file! Please create a validation.txt in this directory.")
+            input("press enter to continue...")
+            self.runType = RunType.DEBUG # turn off posting if no validation found
         return ret
 
     def submissionFilter(self, submission):
+        '''
+        Use to selectively filter submissions based on contents.
+        Returns True if you the submission can be further processed
+        Returns False if the submission should be skipped
+        '''
+
         #only look for imgur links or direct hosted images
         if ("imgur.com" not in submission.url and "i.redd.it" not in submission.url):
             return False
@@ -55,17 +102,24 @@ class bot():
             return False
 
         #iterate through the filter file and see if it contains sumbission.id, if so we have already processed this image
-        with open(self.COMPLETED_IMAGE_ID_FILE, "r") as file:
-            for line in file:
-                if submission.id in line.replace("\n",""):
-                    #print("already worked on " + line)
-                    return False               
+        if self.checkVisitedFile:
+            with open(self.COMPLETED_IMAGE_ID_FILE, "r") as file:
+                for line in file:
+                    if submission.id in line.replace("\n",""):
+                        #print("already worked on " + line)
+                        return False               
 
         return True
 
     def recordNewSubmission(self, submissionId):
-        with open(self.COMPLETED_IMAGE_ID_FILE, "a") as file:
-            file.write(submissionId + "\n")
+        if not self.recordsubmissions:
+            return
+
+        try:
+            with open(self.COMPLETED_IMAGE_ID_FILE, "a") as file:
+                file.write(submissionId + "\n")
+        except FileNotFoundError:
+            print("Visited images file not found!")
 
     def approveMessage(self, message):
         canReturn = False
@@ -85,39 +139,88 @@ class bot():
 
         return answer
 
+    def englishWordFuzzyReplaceFilter(self, text):
+        '''
+        fuzzy compares each word in the text and replaces it with the most similar match, essentially tries to correct some errors in recognition
+        '''
+
+    def lettersOnlyFilter(self, text):
+        '''
+        removes all non alphabetic characters
+        '''
+        #get each line of text
+        lines = text.split("\n") #something like [pretext multiple words, text multi words line 1, text multi words line 2, etc... , post text]
+        newLines = [] 
+
+        #iterate through the lines
+        for line in lines: # line = 'pretext multiple words' etc... goal: create newLine = 
+            #get each word
+            words = line.split(' ') #something like [pretext, multiple, words,]
+            newWords = []
+            for word in words: # 'pretext' etc...
+                newWord = ''.join(c for c in word if c.isalpha())
+                newWords.append(newWord)              
+
+            newLines.append(' '.join(newWords))
+
+        #recompose it back into a reddit comment and print some data
+        text = "\n".join(newLines)
+        return text
+
+    def wordLengthFilter(self, text, minWordLength):
+        '''
+        Removes any word shorter than minWordLength
+        '''
+        #get each line of text
+        lines = text.split("\n") #something like [pretext multiple words, text multi words line 1, text multi words line 2, etc... , post text]
+        newLines = [] 
+
+        #iterate through the lines
+        for line in lines: # line = 'pretext multiple words' etc...
+            #get each word
+            words = line.split(' ') #something like [pretext, multiple, words,]
+            newWords = []
+            for word in words: # 'pretext' etc...
+                a = word.strip()
+                if len(a) >= minWordLength: #dont worry about any empty words either
+                    newWords.append(a)           
+
+            newLines.append(' '.join(newWords))
+
+        #recompose it back into a newline string
+        text = "\n".join(newLines)
+        return text
+
+    def lineLengthFilter(self, text, minLineLength):
+        '''
+        removes all lines shorter than minLineLength
+        '''
+        #get each line of text
+        lines = text.split("\n") #something like [pretext multiple words, text multi words line 1, text multi words line 2, etc... , post text]
+        newLines = [] 
+
+        #iterate through the lines
+        for line in lines: # line = 'pretext multiple words' etc...
+            if len(line) >= minLineLength:
+                newLines.append(line)
+
+        #recompose it back into a newline string
+        text = "\n".join(newLines)
+        return text
+
     #prepare the text for submission at /r/surrealmemes, pretty much randomly applies combining characters to words ("zalgo" text)
-    def surrealifyText(self, text):
+    def surrealifyFilter(self, text):
+        '''
+        Prepares the text for submission to /r/surrealmemes.
+        Randomly applies a zalgo filter to lines,
+        Randomly wraps words in an angery flag, which makes it shake all crazy in the subreddit's comments
+        '''
         chanceLineIsZalgofied = 0.4
         changeWordIsAngery = 0.1
 
-        alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
-
-        #downward going diacritics
-        dd = ['̖',' ̗',' ̘',' ̙',' ̜',' ̝',' ̞',' ̟',' ̠',' ̤',' ̥',' ̦',' ̩',' ̪',' ̫',' ̬',' ̭',' ̮',' ̯',' ̰',' ̱',' ̲',' ̳',' ̹',' ̺',' ̻',' ̼',' ͅ',' ͇',' ͈',' ͉',' ͍',' ͎',' ͓',' ͔',' ͕',' ͖',' ͙',' ͚',' ',]
-        #upward diacritics
-        du = [' ̍',' ̎',' ̄',' ̅',' ̿',' ̑',' ̆',' ̐',' ͒',' ͗',' ͑',' ̇',' ̈',' ̊',' ͂',' ̓',' ̈́',' ͊',' ͋',' ͌',' ̃',' ̂',' ̌',' ͐',' ́',' ̋',' ̏',' ̒',' ̽',' ̉',' ͣ',' ͤ',' ͥ',' ͦ',' ͧ',' ͨ',' ͩ',' ͪ',' ͫ',' ͬ',' ͭ',' ͮ',' ͯ',' ̾',' ͛',' ͆',' ̚',]
-        #build the alterations - zalgo and [text](/a) for shaking angery text
-        dm = [' ̕',' ̛',' ̀',' ́',' ͘',' ̡',' ̢',' ̧',' ̨',' ̴',' ̵',' ̶',' ͜',' ͝',' ͞',' ͟',' ͠',' ͢',' ̸',' ̷',' ͡',' ҉','_',]
-        
-
         #get each line of text
-        lines = text.split("\n\n") #something like [pretext multiple words, text multi words line 1, text multi words line 2, etc... , post text]
-        newLines = []
-
-        #print(lines)
-        #input("press enter to continue")
-
-        ##we need to first merge some lines that are too short with a space
-        #newnewLines = []
-        #i = 0
-        #maxI = len(lines)
-        #while i < maxI:
-
-        ##lines = newnewLines        
-
-        numLines = len(lines)
-        numWords = 0
-        numLetters = 0
+        lines = text.split("\n") #something like [pretext multiple words, text multi words line 1, text multi words line 2, etc... , post text]
+        newLines = [] 
 
         #iterate through the lines
         for line in lines: # line = 'pretext multiple words' etc... goal: create newLine = 
@@ -128,70 +231,62 @@ class bot():
             #get each word, decompose it into a list of letters, zalgofy and then recompose the words and lines individually... just watch
             words = line.split(' ') #something like [pretext, multiple, words,]
             newWords = []
-            numWords = numWords + len(words)
             for word in words: # 'pretext' etc...
-                #get the letters list
-                letters = list(word) #['p','r','e',...]
-                #print(letters)
-                newWord = ''
-                newLetters = letters
-
-                numLetters = numLetters + len(letters)
-
+                newWord = word
                 #zalgofy if we need to, then angery it if we need to
                 if zalgofy:
-                    newLetters = []
-                    
-                    #for each letter, add some diacritics in all directions
-                    for letter in letters: #'p', etc...
-                        a = letter #create a dummy letter
+                    newWord = zalgo.zalgofy(word)
 
-                        #skip this letter we can't add a diacritic to it
-                        if not a.isalpha():
-                            newLetters.append(a)
-                            continue
-
-                        num = random.randint(1,3)
-                        #add the diacritics going up
-                        for i in range(num):                            
-                            d = du[random.randrange(0, len(du))]
-                            a = a + d
-
-                        num = random.randint(1,3)
-                        #add the diacritics going down
-                        for i in range(num):                            
-                            d = dd[random.randrange(0, len(dd))]
-                            a = a + d
-
-                        num = random.randint(0,2)
-                        #add the diacritics in the middle
-                        for i in range(num):                            
-                            d = dm[random.randrange(0, len(dm))]
-                            a = a + d
-                        
-                        a = a.replace(" ","") #remove any spaces, this also gives it the zalgo text look
-                        #print('accented a letter: ' + a)
-                        newLetters.append(a)
-                        
-                newWord = ''.join(newLetters)
-                if random.uniform(0,1) <= changeWordIsAngery:
+                if random.uniform(0,1) <= changeWordIsAngery and word.replace(" ", ""):
                     if random.uniform(0,1) < 0.5:
-                        newWord = "[" + newWord + "](/a)"
+                        newWord = "[" + newWord.strip("[\/] ") + "](/a)" #strip those characters that we dont want, they will mess up the comment
                     else:
-                        newWord = "[" + newWord + "](/angery)"
+                        newWord = "[" + newWord.strip("[\/] ") + "](/angery)"
 
                 newWords.append(newWord)              
 
             newLines.append(' '.join(newWords))
 
-        #recompose it back into a reddit comment and print some data
-        text = "\n\n".join(newLines)
-        #print(text)
-        #input("press enter to continue")
-        #print("Data from submission:")
-        #print("Line count: " + str(numLines))
-        #print("Word count: " + str(numWords))
-        #print("Letter count: " + str(numLetters))
+        #recompose it back into a newline string and return
+        text = "\n".join(newLines)
+        return text
+
+    def fullFilterText(self, text, pretext, posttext, pretextFilter=False, posttextFilter=False):
+        '''
+        Convenience method to create a fully formatted reddit comment, will replace \n with \n\n        
+        This is where you will add the pretext and the post text to the comment.
+        '''
+        #chain your filters here, inner ones are evaluated first
+        filters = self.filterSingleString
+
+        #apply filters to pre and post text
+        if pretextFilter:
+            pretext = filters(pretext)
+        if posttextFilter:
+            posttext = filters(posttext)
+
+        text = filters(text) #text filters
+        return str(pretext + "\n&nbsp;\n" + text + "\n&nbsp;\n" + posttext).replace("\n","\n\n")
+
+    def filterSingleString(self, text):
+        '''
+        Here you can chain filters to the reddit comment for different effects:
+        
+            wordsOnlyFilter:    removes all non alphabetical characters
+            wordLengthFilter:   removes all words shorter than the argument
+            surrealFilter:      randomly applies the zalgo filter to lines and wraps words in [word](/a) tags so they shake on /r/surrealmemes
+
+        Text will be a newline escaped string.
+        An example would be something like:
+
+        text = self.wordsOnlyFilter(text)
+        text = self.wordLengthFilter(text, 4)
+        return text
+        '''
+        text = self.lettersOnlyFilter(text)     #remove all non english letters
+        #text = self.wordLengthFilter(text, 2)   #remove all words shorter than 3 characters
+        text = self.lineLengthFilter(text, 1)   #only accept lines that have at least 1 character in them
+        text = self.surrealifyFilter(text)
         return text
 
     #processes an image for OCR, fpath is assumed to be an image type file
@@ -207,6 +302,7 @@ class bot():
         '''
         texts = []
         image = Image.open(fpath)        
+        image = self.remove_transparency(image)
         image = image.convert("L")
         baseimage = image.copy() #a reference to the unprocessed image, only process this bad boy
 
@@ -235,30 +331,43 @@ class bot():
 
         return longestText
 
+    def remove_transparency(self, im, bg_colour=(255, 255, 255)):
+        # Only process if image has transparency (http://stackoverflow.com/a/1963146)
+        if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+
+            # Need to convert to RGBA if LA format due to a bug in PIL (http://stackoverflow.com/a/1963146)
+            alpha = im.convert('RGBA').split()[-1]
+
+            # Create a new background image of our matt color.
+            # Must be RGBA because paste requires both images have the same format
+            # (http://stackoverflow.com/a/8720632  and  http://stackoverflow.com/a/9459208)
+            bg = Image.new("RGBA", im.size, bg_colour + (255,))
+            bg.paste(im, mask=alpha)
+            return bg
+
+        else:
+            return im
+
     def makeComment(self, submission, comment):
         if self.reddit is None:
             return None
 
         #reauthorize the bot to post
         self.reddit.read_only = False
-        submission.reply(comment)
-        print("submission approved")
-        #append the submission id to the file so we never work on it again
-        self.recordNewSubmission(submission.id)
+
+        try:
+            submission.reply(comment)
+            print("submission approved")
+            #append the submission id to the file so we never work on it again
+            self.recordNewSubmission(submission.id)
+        except PrawcoreException:
+            print("error submitting comment")
+            input("press enter to continue...")
         self.reddit.read_only = True
 
     #initialize the bot and loop through the posts
-    def runBot(self):
-        #get a Reddit instance
-        self.reddit = praw.Reddit(client_id=self.clientId,
-                        client_secret=self.secret,
-                        password=self.password,
-                        user_agent='python:'+self.username+':v0.1 (by /u/'+self.username+')',
-                        username=self.username)
-
-        print("Loaded " + self.username + "...")
+    def generatePosts(self):        
         print("Browsing posts from /r/" + self.subreddit)
-
         if self.numSubmissionsToProcess == -1:
             print("Processing all new submissions until manually terminated...")
         else:
@@ -302,76 +411,156 @@ class bot():
 
                     text = self.processImage(fpath)
 
-                    if len(text.replace(' ', '')) <= 3:
-                        print("Too short a text, skipping...")
+                    c = True #skip this image?
+                    for line in text.split('\n'):
+                        if len(line.replace(' ', '')) > 2:
+                            c = False #not if there are any long enough lines in it
+                            break
+
+                    if c:
+                        print("Text too short, skipping...")
+                        print(text)
                         self.recordNewSubmission(submission.id)
                         continue
             
-                    #so newlines are actually newlines in the reddit comment
-                    text = text.replace("\n", "\n\n")            
-                    text = self.surrealifyText(text) #prepare the text for /r/surrealmemes, pass through a zalgo filter and an angery filter
-                    fulltext = self.surrealifyText(self.preText[random.randrange(0, len(self.preText))]) + "\n\n&nbsp;\n\n" + text + "\n\n&nbsp;\n\n^^^^created ^^^^by ^^^^some ^^^^guy ^^^^| ^^^^[feedback](https://www.reddit.com/message/compose/?to=ocr_bot)"
+                    #create the reddit comment
+                    fulltext = self.fullFilterText(text, self.preText, self.postText)
 
-                    print("Found some text! Creating post and opening page!")
+                    print("Finished processing " + str(submission.id) + "!")
                     print("\nFull Post:\n")
                     print(fulltext)
 
-                    #try to post and open the comment window
-                    try:
-                        i += 1
-                        print("progress: " + str(i) + "/" + str(self.numSubmissionsToProcess))
-                        self.makeComment(submission, fulltext)
+                    if self.runType is RunType.POSTING:
+                        #try to post and open the comment window
+                        try:
+                            i += 1
+                            progress = str(i) + " of "
                         
-                        #time.sleep(2) #give it time to send the comment before opening
+                            if self.numSubmissionsToProcess == -1:
+                                progress += "∞"
+                            else:
+                               progress += str(self.numSubmissionsToProcess)
 
-                        #just open the most recent comment
-                        #for comment in self.reddit.redditor(self.username).comments.new():
-                        #    webbrowser.open_new_tab(comment.permalink())
-                        #    break
-
-                        ##check for approval
-                        #if self.NEEDS_APPROVAL:
-                        #    if self.approveMessage("Approve above post?"):
-                        #        i += 1
-                        #        makeComment(submission, fulltext)
-                                
-                        #    else:
-                        #        print("submission denied")
-                        #        addToSkip = self.approveMessage("Add to skip list?")
-                        #        if addToSkip:
-                        #            self.recordNewSubmission(submission.id)
-                                                #check for approval
-                    except PrawcoreException:
-                        print("There was an error posting, restarting stream...")
-                        break
-
-                    #goAgain = self.approveMessage("Go again?")
-                    #if not goAgain:
-                    #    print("exiting")
-                    #    return None
+                            print("progress: " + progress + " - " + datetime.datetime.now().strftime("%X"))
+                            self.makeComment(submission, fulltext)
+                        except PrawcoreException:
+                            print("There was an error posting, restarting stream...")
+                            break
             except PrawcoreException:
                 print("Prawcore exception, restarting stream...")
                 continue
             except KeyboardInterrupt:
                 print("Keyboard interruption, stopping stream...")
                 break
-    
-def fixFiles():
-    with open('diacritics_up.txt', 'r') as file:
-        lines = file.read().splitlines()
-        newlines = []
-        regex = re.compile(r'\/\*(.*?)\*\/') #remove some stuff, this selects all of the unicode characters surrounded by space
-        for line in lines:
-            print(line)
-            for match in re.findall(regex, line):
-                print(match)
-                newlines.append(match.replace(' ',''))
 
-        print(newlines)
-        if (len(newlines) > 0):
-            print(type(newlines[0]))
+    def getNewSubmissions(self, numPosts=5, postTimeout=7, globalTimeout = 15):
+        '''
+        Will download and return a list of submissions for processing
 
+        Tries to download numPosts new submissions within globalTimeout seconds
+        Will return early if a post takes longer than globalTimeout to download any new post
+        '''
+        submissions = []
+        
+        print("Downloading "+str(numPosts)+" posts from /r/" + self.subreddit)
+        print("Timeout of "+str(postTimeout)+"s")
+
+        #deauthorize the reddit instance until just before we want to post
+        self.reddit.read_only = True
+
+        #get the subreddit
+        posts = self.reddit.subreddit(self.subreddit)
+
+        i = 0
+        gt = time.time() #global loop timer
+        while True:
+            lt = time.time() #local loop timer
+            if i >= numPosts:
+                print("Downloaded " + str(numPosts) + " submissions for processing.")
+                break
+            
+            try:
+                print("Trying to download more posts...")
+
+                #loop through posts, this will give up to 100 historical submissions so its perfect for scheduled tasks to dl the most recent submissions every so often
+                for submission in posts.stream.submissions():
+                    if submission is None and time.time() - lt > postTimeout: #each time there is a null submission we will exit the loop and check for a global timeout
+                        print("No new posts - timeing out...")
+                        break
+                    if i >= numPosts:
+                        break
+                    if not self.submissionFilter(submission):
+                        continue
+                    submissions.append(submission)
+                    print("success! " + str(i+1) + "/" + str(numPosts))
+                    i += 1
+            except PrawcoreException:
+                print("Prawcore exception, restarting stream...")
+                continue
+            except KeyboardInterrupt:
+                print("Keyboard interruption, stopping stream...")
+                break
+            
+            if time.time() - gt > globalTimeout:
+                break
+
+        return submissions
+
+    def processSubmissions(self, submissions):
+        '''
+        Will process a list of submissions (download image and perform OCR) and make a post based on the output
+        '''
+        print("Processing " + str(len(submissions)) + " submissions...")
+        for submission in submissions:
+            #get the pics extension so we can open the correct type of file
+            ext = submission.url[-4:]  
+            fpath = self.image_fname + ext
+            #download the image and copy it to a file
+            response = requests.get(submission.url, stream=True)
+            with open(fpath, "wb") as img_file:
+                shutil.copyfileobj(response.raw, img_file)           
+
+            #remove this data
+            del response
+
+            text = self.processImage(fpath)
+
+            c = True #skip this image?
+            for line in text.split('\n'):
+                if len(line.replace(' ', '')) > 2:
+                    c = False #not if there are any long enough lines in it
+                    break
+
+            if c:
+                print("Text too short, skipping...")
+                print(text)
+                self.recordNewSubmission(submission.id)
+                continue
+            
+            #create the reddit comment
+            fulltext = self.fullFilterText(text, self.preText, self.postText)
+
+            try:
+                print("Finished processing " + str(submission.id) + " - " + str(submissions.index(submission)+1) + "/" + str(len(submissions)))
+            except ValueError:
+                print("submission not found in submissions list, this error should not occur!")
+            #print("\nFull Post:\n")
+            #print(fulltext)
+
+            if self.runType is RunType.POSTING:
+                #try to post and open the comment window
+                try:
+                    self.makeComment(submission, fulltext)
+                except PrawcoreException:
+                    print("There was an error posting, restarting stream...")
+                    break
+
+    def doSingleBatch(self, numPostsToProcess=5):
+        submissions = self.getNewSubmissions(numPosts=numPostsToProcess)
+        self.processSubmissions(submissions)
 
 if __name__ == "__main__": 
     a = bot()
-    a.runBot()
+    a.subreddit = "surrealmemes"
+    a.runType = RunType.DEBUG
+    a.doSingleBatch(numPostsToProcess=2)
