@@ -12,6 +12,7 @@ import random
 import re
 import datetime
 import os
+import db
 
 class RunType(Enum):
 	POSTING = 1,    #will post to reddit, make sure you are validated
@@ -37,7 +38,6 @@ class bot():
 
 	def __init__(self, **kwargs):
 		self.SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))+"/"
-		self.VALIDATION_FILE = self.SCRIPT_DIR+"validation.txt"
 
 		#place your reddit api secret, client id, username and password on seperate lines in validation.txt in this directory
 		validation = self.loadCredentials()
@@ -48,7 +48,6 @@ class bot():
 		self.password = validation[3]
 
 		self.image_fname = self.SCRIPT_DIR+"images/img"
-		self.COMPLETED_IMAGE_ID_FILE = self.SCRIPT_DIR+"visitedImages.txt"
 
 		self.reddit = None
 		self.subreddit = "surrealmemes"
@@ -73,17 +72,8 @@ class bot():
 
 		print("Loaded " + self.username + "...")
 
-	def loadCredentials(self):
-		ret = []
-		try:
-			with open(self.VALIDATION_FILE, 'r') as file:
-				for line in file:
-					ret.append(line.rstrip())
-		except FileNotFoundError:
-			print("No validation file! Please create a "+self.VALIDATION_FILE+" in: ")
-			input("press enter to continue...")
-			self.runType = RunType.DEBUG # turn off posting if no validation found
-		return ret
+	def loadCredentials(self):		
+		return list(db.getCredentials())
 
 	def submissionFilter(self, submission):
 		'''
@@ -106,24 +96,16 @@ class bot():
 
 		#iterate through the filter file and see if it contains sumbission.id, if so we have already processed this image
 		if self.checkVisitedFile:
-			with open(self.COMPLETED_IMAGE_ID_FILE, "r") as file:
-				for line in file:
-					if submission.id in line.replace("\n",""):
-						#print("already worked on " + line)
-						return False               
-
+			if db.linkExists(submission.id):
+				return False
 		return True
 
 	def recordNewSubmission(self, submissionId):
 		if not self.recordsubmissions:
 			return
-
-		try:
-			with open(self.COMPLETED_IMAGE_ID_FILE, "a") as file:
-				file.write(submissionId + "\n")
-		except FileNotFoundError:
-			print("Visited images file not found!")
-
+		
+		db.addVisitedLink(submissionId)
+		
 	def approveMessage(self, message):
 		canReturn = False
 		answer = False
@@ -562,7 +544,12 @@ class bot():
 		self.processSubmissions(submissions)
 
 if __name__ == "__main__": 
+    #set up the database for the first time
+    #run this next line by itself once, then comment it out:
+    #db.recreateDatabase("<clientid>", "<secret>", "<username>", "<password>")
+
 	a = bot()
 	a.subreddit = "surrealmemes"
 	a.runType = RunType.POSTING
-	a.doSingleBatch(numPostsToProcess=10)
+	a.doSingleBatch(numPostsToProcess=15)
+    #input("press enter to continue...")

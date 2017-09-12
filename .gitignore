@@ -303,5 +303,4 @@ $RECYCLE.BIN/
 *.lnk
 *.jpg
 *.png
-validation.txt
-visitedImages.txt
+*.db
