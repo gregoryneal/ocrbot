@@ -544,12 +544,12 @@ class bot():
 		self.processSubmissions(submissions)
 
 if __name__ == "__main__": 
-    #set up the database for the first time
-    #run this next line by itself once, then comment it out:
-    #db.recreateDatabase("<clientid>", "<secret>", "<username>", "<password>")
+	#set up the database for the first time
+	#run this next line by itself once, then comment it out:
+	#db.recreateDatabase("<clientid>", "<secret>", "<username>", "<password>")
 
 	a = bot()
 	a.subreddit = "surrealmemes"
 	a.runType = RunType.POSTING
 	a.doSingleBatch(numPostsToProcess=15)
-    #input("press enter to continue...")
+	#input("press enter to continue...")
